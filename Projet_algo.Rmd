@@ -1,0 +1,672 @@
+```{r}
+# Function to calculate Euclidean distance between two points
+euclidean_distance <- function(row1, row2) {
+  return(sqrt(sum((row1 - row2) ^ 2)))
+}
+
+# Function to get the k nearest neighbors to a test instance
+get_neighbors <- function(training_set, test_instance, k) {
+  distances <- array(dim = nrow(training_set))
+  for (i in 1:nrow(training_set)) {
+    distances[i] <- euclidean_distance(test_instance, training_set[i, 1:ncol(training_set)-1])
+  }
+  sorted_indices <- order(distances)
+  neighbors <- training_set[sorted_indices[1:k], ]
+  return(neighbors)
+}
+
+# Function to make a prediction with neighbors
+predict_classification_KNN <- function(training_set, test_instance, k) {
+  neighbors <- get_neighbors(training_set, test_instance, k)
+  outcomes <- table(neighbors[, ncol(neighbors)])
+  return(as.integer(names(which.max(outcomes))))
+}
+
+predict_classification_KNN_R <- function(dataset, target_points, k) {
+  sapply(1:nrow(target_points), function(i) {
+    test_instance <- target_points[i, ]
+    predict_classification_KNN(dataset, test_instance, k = k) # Assumes predict_classification_KNN_R is defined
+  })
+}
+
+```
+
+
+
+```{r}
+library(Rcpp)
+
+# Assume knnRcpp is defined in a C++ file located at the specified path
+sourceCpp("C:/Users/Elitebook/Desktop/knn.cpp")
+
+#knnRcpp est la fonction de prediction
+
+predict_knn_cpp <- function(trainingSet, target_points, k) {
+  predictions <- numeric(length = nrow(target_points))
+  
+  # Convert the dataset to a matrix if not already done so, assuming knnRcpp requires matrix input
+  trainingSetMatrix <- as.matrix(trainingSet[, -ncol(trainingSet)]) # Exclude the class/label column
+  
+  for (i in 1:nrow(target_points)) {
+    x <- target_points[i, 1]
+    y <- target_points[i, 2]
+    
+    # Ensure x, y, and k are correctly formatted; this might need adjustment based on knnRcpp's expectations
+    predictions[i] <- knnRcpp(trainingSetMatrix, x, y, k)
+  }
+  
+  return(predictions)
+}
+
+
+```
+
+```{r}
+Node_R <- setRefClass("Node",
+                    fields = list(point = "numeric", # Point inclura les coordonnées et la classe
+                                  left = "ANY",  # Utilisation de "ANY" pour permettre la récursivité
+                                  right = "ANY",
+                                  dimension = "numeric"))
+
+# Fonction pour construire l'arbre KD
+build_kdtree_R <- function(points, depth = 0) {
+  if (nrow(points) == 0) {
+    return(NULL)
+  }
+  
+  k <- ncol(points) - 1 # Nombre de caractéristiques, en supposant la dernière colonne pour la classe
+  axis <- depth %% k
+  points <- points[order(points[, axis + 1]), ]
+  median_index <- ceiling(nrow(points) / 2)
+  
+  node <- Node_R$new()
+  node$point <- as.numeric(points[median_index, ]) # S'assurer que c'est un vecteur numérique
+  node$dimension <- axis
+  
+  node$left <- if (median_index - 1 > 0) build_kdtree_R(points[1:(median_index-1), , drop = FALSE], depth + 1) else NULL
+  node$right <- if (median_index < nrow(points)) build_kdtree_R(points[(median_index+1):nrow(points), , drop = FALSE], depth + 1) else NULL
+  
+  return(node)
+}
+
+# Fonction pour calculer la distance euclidienne entre deux points (sans prendre en compte la classe)
+euclidean_distance <- function(point1, point2) {
+  sqrt(sum((point1 - point2)^2))
+}
+
+# Fonction pour trouver les k plus proches voisins
+nearest_neighbors_search_R <- function(node, target_point, k, depth = 0, neighbors = NULL) {
+  if (is.null(neighbors)) {
+    neighbors <- list(points = vector("list", k), distances = rep(Inf, k), classes = vector("list", k))
+  }
+  
+  if (is.null(node)) {
+    return(neighbors)
+  }
+  
+  current_dist <- euclidean_distance(target_point, node$point[1:2])
+  
+  # Vérifier s'il y a de l'espace ou si le point actuel est plus proche que le plus éloigné dans les voisins
+  max_dist_index <- which.max(neighbors$distances)
+  if (current_dist < neighbors$distances[max_dist_index]) {
+    neighbors$distances[max_dist_index] <- current_dist
+    neighbors$points[max_dist_index] <- list(node$point[1:2])
+    neighbors$classes[max_dist_index] <- node$point[3]
+    
+    # Trier les voisins par ordre de distance croissante
+    order_indexes <- order(neighbors$distances)
+    neighbors$points <- neighbors$points[order_indexes]
+    neighbors$distances <- neighbors$distances[order_indexes]
+    neighbors$classes <- neighbors$classes[order_indexes]
+  }
+  
+  axis <- depth %% (length(target_point) - 1) # -1 car target_point n'inclut pas de classe
+  if (!is.null(node$left) && (target_point[axis + 1] < node$point[axis + 1] || current_dist < neighbors$distances[k])) {
+    neighbors <- nearest_neighbors_search_R(node$left, target_point, k, depth + 1, neighbors)
+  }
+  
+  if (!is.null(node$right) && (target_point[axis + 1] >= node$point[axis + 1] || current_dist < neighbors$distances[k])) {
+    neighbors <- nearest_neighbors_search_R(node$right, target_point, k, depth + 1, neighbors)
+  }
+  
+  return(neighbors)
+}
+
+
+
+# Fonction pour prédire la classe basée sur les k plus proches voisins
+predict_class_KD_R <- function(classes) {
+  table_classes <- table(unlist(classes))
+  return(names(which.max(table_classes)))
+}
+
+predict_kdtree_R <- function(dataset, target_points, k) {
+  kdtree <- build_kdtree_R(dataset) # Assumes build_kdtree_R is defined
+  predictions <- numeric(length = nrow(target_points))
+  for (i in 1:nrow(target_points)) {
+    result <- nearest_neighbors_search_R(kdtree, target_points[i, ], k) # Assumes nearest_neighbors_search_R is defined
+    predictions[i] <- predict_class_KD_R(result$classes) # Assumes predict_class_KD_R is defined
+  }
+  predictions
+}
+
+```
+
+
+```{r}
+library(Rcpp)
+sourceCpp("C:/Users/Elitebook/Desktop/KD-tree-c++.cpp")
+
+#predictClassForPoint est la fonction
+
+predict_kdtree_cpp <- function(dataset, target_points, k) {
+  # Convert dataset to a matrix if it isn't already, assuming predictClassForPoint needs a matrix.
+  # Adjust this line based on the actual format predictClassForPoint expects for pointsData.
+  pointsData <- as.matrix(dataset[, -ncol(dataset)]) # Excluding the class label column if present
+  
+  predictions <- numeric(length = nrow(target_points))
+  for (i in 1:nrow(target_points)) {
+    x <- target_points[i, 1]
+    y <- target_points[i, 2]
+    # Ensure all arguments are in the correct format
+    predictions[i] <- predictClassForPoint(pointsData, x, y, k)
+  }
+  return(predictions)
+}
+
+
+```
+
+```{r}
+# Génération d'un jeu de données commun pour tous les exemples
+generate_data <- function(n) {
+  x <- rnorm(n, mean = 5, sd = 2)
+  y <- rnorm(n, mean = 3, sd = 1.5)
+  # S'assurer que le nombre de classes 0 et 1 est égal et correspond à n
+  classes <- sample(c(rep(0, ceiling(n / 2)), rep(1, floor(n / 2))))
+  dataset <- data.frame(x = x, y = y, class = classes)
+  return(dataset)
+}
+target_points <- matrix(rnorm(60, mean = c(5, 3), sd = c(2, 1.5)), ncol = 2)
+
+```
+
+```{r}
+# Assuming 'k' is defined, e.g., k <- 3
+k <- 10
+
+# KNN Predictions in R
+predictions_knn <- predict_classification_KNN_R(generate_data(1000), target_points, k)
+
+# KNN Predictions using a C++ approach
+# Note: You'll need to replace `trainingSet` with `dataset` if using the same data structure
+predictions_knn_cpp <- predict_knn_cpp(generate_data(1000), target_points, k)
+
+# KD-tree Predictions in R
+predictions_kdtree_R <- predict_kdtree_R(generate_data(1000), target_points, k)
+
+# KD-tree Predictions using a C++ approach
+# Note: Replace `pointsData` with the appropriate C++ data structure or dataset
+predictions_kdtree_cpp <- predict_kdtree_cpp(generate_data(1000), target_points, k)
+
+```
+
+```{r}
+library(microbenchmark)
+
+# Tailles de jeux de données à tester
+dataset_sizes <- c(10, 50, 100, 300, 500)
+
+# Définir les points cibles une seule fois
+target_points <- matrix(rnorm(60, mean = c(5, 3), sd = c(2, 1.5)), ncol = 2)
+
+# Pour stocker les résultats
+execution_times <- numeric(length(dataset_sizes))
+
+for (i in seq_along(dataset_sizes)) {
+  # Générer le jeu de données avec la fonction generate_data
+  dataset <- generate_data(dataset_sizes[i])
+  
+  # Mesurer le temps d'exécution
+  mbm_results <- microbenchmark(
+    predict_classification_KNN_R(dataset, target_points, k = 3),
+    times = 5  # Nombre réduit de répétitions pour réduire le temps d'exécution global
+  )
+  
+  # Stocker le temps moyen d'exécution
+  execution_times[i] <- mean(mbm_results$time)
+}
+
+# Afficher les temps d'exécution
+execution_times
+
+plot(dataset_sizes, execution_times, type = "o", xlab = "Taille du jeu de données", ylab = "Temps d'exécution (ns)", main = "Performance de predict_classification_KNN")
+
+
+```
+```{r}
+library(microbenchmark)
+
+# Tailles de jeux de données à tester
+dataset_sizes <- c(20, 50, 100, 300, 500)
+
+# Définir les points cibles une seule fois
+target_points <- matrix(rnorm(60, mean = c(5, 3), sd = c(2, 1.5)), ncol = 2)
+
+# Pour stocker les résultats
+execution_times <- numeric(length(dataset_sizes))
+
+for (i in seq_along(dataset_sizes)) {
+  # Générer le jeu de données avec la fonction generate_data
+  dataset <- generate_data(dataset_sizes[i])
+  
+  # Mesurer le temps d'exécution
+  mbm_results <- microbenchmark(
+    predict_knn_cpp(dataset, target_points, k = 10),
+    times = 5  # Nombre réduit de répétitions pour réduire le temps d'exécution global
+  )
+  
+  # Stocker le temps moyen d'exécution
+  execution_times[i] <- mean(mbm_results$time)
+}
+
+# Afficher les temps d'exécution
+execution_times
+
+plot(dataset_sizes, execution_times, type = "o", xlab = "Taille du jeu de données", ylab = "Temps d'exécution (ns)", main = "Performance de predict_knn_cpp")
+```
+
+```{r}
+# Tailles de jeux de données à tester
+dataset_sizes <- c(20, 50, 100, 300, 500)
+
+# Définir les points cibles une seule fois
+target_points <- matrix(rnorm(60, mean = c(5, 3), sd = c(2, 1.5)), ncol = 2)
+
+# Pour stocker les résultats
+execution_times <- numeric(length(dataset_sizes))
+
+for (i in seq_along(dataset_sizes)) {
+  # Générer le jeu de données avec la fonction generate_data
+  dataset <- generate_data(dataset_sizes[i])
+  
+  # Mesurer le temps d'exécution
+  mbm_results <- microbenchmark(
+    predict_kdtree_R(dataset, target_points, k = 10),
+    times = 5  # Nombre réduit de répétitions pour réduire le temps d'exécution global
+  )
+  
+  # Stocker le temps moyen d'exécution
+  execution_times[i] <- mean(mbm_results$time)
+}
+
+# Afficher les temps d'exécution
+execution_times
+
+plot(dataset_sizes, execution_times, type = "o", xlab = "Taille du jeu de données", ylab = "Temps d'exécution (ns)", main = "Performance de predict_kdtree_R")
+```
+
+
+```{r}
+# Tailles de jeux de données à tester
+dataset_sizes <- c(20, 50, 100, 300, 500)
+
+# Définir les points cibles une seule fois
+target_points <- matrix(rnorm(60, mean = c(5, 3), sd = c(2, 1.5)), ncol = 2)
+
+# Pour stocker les résultats
+execution_times <- numeric(length(dataset_sizes))
+
+for (i in seq_along(dataset_sizes)) {
+  # Générer le jeu de données avec la fonction generate_data
+  dataset <- generate_data(dataset_sizes[i])
+  
+  # Mesurer le temps d'exécution
+  mbm_results <- microbenchmark(
+    predict_kdtree_cpp(dataset, target_points, k = 10),
+    times = 5  # Nombre réduit de répétitions pour réduire le temps d'exécution global
+  )
+  
+  # Stocker le temps moyen d'exécution
+  execution_times[i] <- mean(mbm_results$time)
+}
+
+# Afficher les temps d'exécution
+execution_times
+
+plot(dataset_sizes, execution_times, type = "o", xlab = "Taille du jeu de données", ylab = "Temps d'exécution (ns)", main = "Performance de predict_kdtree_cpp")
+```
+
+
+```{r}
+library(microbenchmark)
+
+# Définition de la fonction benchmark_algorithm
+benchmark_algorithm <- function(dataset, func) {
+  # Supposons que la fonction attend deux paramètres : un dataset et des points cibles
+  # Nous générons ici des points cibles pour le benchmark
+  target_points <- matrix(rnorm(60, mean = c(5, 3), sd = c(2, 1.5)), ncol = 2)
+  k <- 10 # Définir un k pour KNN
+
+  # Mesurer le temps d'exécution avec microbenchmark
+  results <- microbenchmark(
+    func(dataset, target_points, k),
+    times = 5 # Nombre de répétitions pour le benchmark
+  )
+  
+  return(results)
+}
+```
+
+
+
+
+
+
+
+```{r}
+sizes <- c(20, 50, 100, 300, 500) # Exemples de tailles de dataset
+results <- list()
+
+for (size in sizes) {
+  dataset <- generate_data(size)
+  results[[as.character(size)]] <- benchmark_algorithm(dataset, predict_classification_KNN_R) 
+}
+
+library(ggplot2)
+
+times <- sapply(results, function(result) median(result$time))
+data_for_plot <- data.frame(Size = sizes, Time = times)
+
+ggplot(data_for_plot, aes(x = log10(Size), y = log10(Time))) +
+  geom_point() +
+  geom_line() +
+  xlab("Log(Size of Dataset)") +
+  ylab("Log10(time)") +
+  ggtitle("Knn Complexity")
+
+```
+```{r}
+for (size in sizes) {
+  dataset <- generate_data(size)
+  results[[as.character(size)]] <- benchmark_algorithm(dataset, predict_knn_cpp) # Remplacez par votre fonction
+}
+
+library(ggplot2)
+
+times <- sapply(results, function(result) median(result$time))
+data_for_plot <- data.frame(Size = sizes, Time = times)
+
+ggplot(data_for_plot, aes(x = log10(Size), y = Time)) +
+  geom_point() +
+  geom_line() +
+  xlab("Log(Size of Dataset)") +
+  ylab("Log10(time)") +
+  ggtitle("Knn-cpp Complexity")
+```
+
+
+
+```{r}
+for (size in sizes) {
+  dataset <- generate_data(size)
+  results[[as.character(size)]] <- benchmark_algorithm(dataset, predict_kdtree_R) # Remplacez par votre fonction
+}
+
+library(ggplot2)
+
+times <- sapply(results, function(result) median(result$time))
+data_for_plot <- data.frame(Size = sizes, Time = times)
+
+ggplot(data_for_plot, aes(x = log10(Size), y = Time)) +
+  geom_point() +
+  geom_line() +
+  xlab("Log(Size of Dataset)") +
+  ylab("Log10(time)") +
+  ggtitle("kdtree_R Complexity")
+```
+
+
+```{r}
+for (size in sizes) {
+  dataset <- generate_data(size)
+  results[[as.character(size)]] <- benchmark_algorithm(dataset, predict_kdtree_cpp) # Remplacez par votre fonction
+}
+
+library(ggplot2)
+
+times <- sapply(results, function(result) median(result$time))
+data_for_plot <- data.frame(Size = sizes, Time = times)
+
+ggplot(data_for_plot, aes(x = log10(Size), y = Time)) +
+  geom_point() +
+  geom_line() +
+  xlab("Log(Size of Dataset)") +
+  ylab("Log10(time)") +
+  ggtitle("kdtree_cpp Complexity")
+```
+
+
+
+
+
+
+
+
+
+```{r}
+one.simu_time_algo <- function(data, algo = "KNN", k = 3) {
+  start_time <- Sys.time()
+  
+  if (algo == "KNN") {
+    # Supposons que votre fonction KNN attend un dataset et un ensemble de points cibles
+    target_points <- matrix(runif(2 * nrow(data) / 10), ncol = 2) # 10% du dataset comme points cibles
+    predict_classification_KNN_R(data, target_points, k)
+  } else if (algo == "KD-tree") {
+    # Supposons que votre fonction KD-tree attend aussi un dataset et un ensemble de points cibles
+    target_points <- matrix(runif(2 * nrow(data) / 10), ncol = 2)
+    predict_kdtree_R(data, target_points, k)
+  }
+  
+  end_time <- Sys.time()
+  return(as.numeric(difftime(end_time, start_time, units = "secs")))
+}
+```
+
+
+
+```{r}
+my_n_vector_LOG <- seq(from = log(10), to = log(100), by = log(10)/40)
+my_n_vector <- round(exp(my_n_vector_LOG))
+
+p <- 10 # Nombre de répétitions pour chaque taille et chaque algorithme
+df <- data.frame(matrix(nrow = 2 * length(my_n_vector), ncol = 2 + p))
+colnames(df) <- c("Algorithm", "n", paste("run", 1:p, sep = "_"))
+
+j <- 1
+
+for (n in my_n_vector) {
+  cat("Processing size:", n, "\n")
+  data <- generate_data(n) # Générez votre jeu de données ici
+  
+  for (algo in c("KNN", "KD-tree")) {
+    times <- replicate(p, one.simu_time_algo(data, algo, k = 3))
+    df[j, ] <- c(algo, n, times)
+    j <- j + 1
+  }
+}
+
+# Transformer le dataframe pour l'analyse
+library(reshape2)
+df_melt <- melt(df, id.vars = c("Algorithm", "n"), variable.name = "rep", value.name = "Time")
+
+```
+
+
+```{r}
+library(ggplot2)
+
+# Assurez-vous que les données sont correctement formatées
+df_melt$n <- as.numeric(as.character(df_melt$n))
+df_melt$Time <- as.numeric(as.character(df_melt$Time))
+
+ggplot(df_melt, aes(x = log(n), y = log(Time), color = Algorithm)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_minimal() +
+  labs(x = "Log(Number of Points)", y = "Log(Time in Seconds)", title = "Performance Analysis")
+
+
+# Calcul des coefficients directeurs pour chaque algorithme
+for (algo in unique(df_melt$Algorithm)) {
+  df_sub <- subset(df_melt, Algorithm == algo)
+  model <- lm(log(Time) ~ log(n), data = df_sub)
+  cat("Algorithme:", algo, "\n")
+  print(summary(model)$coefficients)
+}
+```
+
+```{r}
+one.simu_time_algo <- function(data, algo = "R", k = 3) {
+  target_points <- matrix(runif(2 * nrow(data) / 10), ncol = 2) # Génération de points cibles
+
+  start_time <- Sys.time()
+  
+  if (algo == "R") {
+    predict_classification_KNN_R(data, target_points, k)
+  } else if (algo == "CPP") {
+    predict_knn_cpp(data, target_points, k)
+  }
+  
+  end_time <- Sys.time()
+  return(as.numeric(difftime(end_time, start_time, units = "secs")))
+}
+```
+
+```{r}
+# Préparation des tailles de dataset sur une échelle logarithmique
+my_n_vector_LOG <- seq(from = log(10), to = log(100), by = log(10)/40)
+my_n_vector <- round(exp(my_n_vector_LOG))
+
+p <- 5 # Répétitions pour chaque taille de dataset
+df <- data.frame(matrix(nrow = 2 * length(my_n_vector), ncol = 2 + p))
+colnames(df) <- c("Algorithm", "n", paste("run", 1:p, sep = "_"))
+
+j <- 1
+
+for (n in my_n_vector) {
+  cat("Processing size:", n, "\n")
+  data <- generate_data(n) # Utilisez votre fonction pour générer les données
+  
+  for (algo in c("R", "CPP")) {
+    times <- replicate(p, one.simu_time_algo(data, algo, k = 3))
+    df[j, ] <- c(algo, n, times)
+    j <- j + 1
+  }
+}
+
+library(reshape2)
+df_melt <- melt(df, id.vars = c("Algorithm", "n"), variable.name = "rep", value.name = "Time")
+
+```
+
+```{r}
+library(ggplot2)
+
+# S'assurer que les données sont numériques
+df_melt$n <- as.numeric(as.character(df_melt$n))
+df_melt$Time <- as.numeric(as.character(df_melt$Time))
+
+# Création du graphique log-log
+ggplot(df_melt, aes(x = log(n), y = log(Time), color = Algorithm)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_minimal() +
+  labs(x = "Log(n)", y = "Log(T(n))", title = "Performance Analysis")
+
+# Calcul des coefficients directeurs pour chaque algorithme
+for (algo in unique(df_melt$Algorithm)) {
+  df_sub <- subset(df_melt, Algorithm == algo)
+  model <- lm(log(Time) ~ log(n), data = df_sub)
+  cat("Algorithm:", algo, "\n")
+  print(summary(model)$coefficients)
+}
+
+```
+
+```{r}
+one.simu_time_kdtree <- function(data, algo = "R", k = 3) {
+  target_points <- matrix(runif(2 * nrow(data) / 10), ncol = 2) # Génération de points cibles
+
+  start_time <- Sys.time()
+  
+  if (algo == "R") {
+    predict_kdtree_R(data, target_points, k)
+  } else if (algo == "CPP") {
+    predict_kdtree_cpp(data, target_points, k)
+  }
+  
+  end_time <- Sys.time()
+  return(as.numeric(difftime(end_time, start_time, units = "secs")))
+}
+
+```
+
+```{r}
+my_n_vector_LOG <- seq(from = log(10), to = log(100), by = log(10)/40)
+my_n_vector <- round(exp(my_n_vector_LOG))
+
+p <- 5 # Nombre de répétitions
+df <- data.frame(matrix(nrow = 2 * length(my_n_vector), ncol = 2 + p))
+colnames(df) <- c("Algorithm", "n", paste("run", 1:p, sep = "_"))
+
+j <- 1
+
+for (n in my_n_vector) {
+  cat("Processing size:", n, "\n")
+  data <- generate_data(n)
+  
+  for (algo in c("R", "CPP")) {
+    times <- replicate(p, one.simu_time_kdtree(data, algo, k = 3))
+    df[j, ] <- c(algo, n, times)
+    j <- j + 1
+  }
+}
+
+df_melt <- reshape2::melt(df, id.vars = c("Algorithm", "n"), variable.name = "rep", value.name = "Time")
+df_melt$n <- as.numeric(as.character(df_melt$n))
+df_melt$Time <- as.numeric(as.character(df_melt$Time))
+
+```
+
+
+
+
+```{r}
+ggplot(df_melt, aes(x = log(n), y = log(Time), color = Algorithm)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_minimal() +
+  labs(x = "Log(n)", y = "Log(T(n))", title = "KD-tree Performance Analysis")
+
+
+for (algo in unique(df_melt$Algorithm)) {
+  df_sub <- subset(df_melt, Algorithm == algo)
+  model <- lm(log(Time) ~ log(n), data = df_sub)
+  cat("Algorithm:", algo, "\n")
+  print(summary(model)$coefficients)
+}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
